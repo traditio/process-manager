@@ -1,0 +1,27 @@
+<% for (pid in data) { %>
+
+
+            <!-- .Информация о процессе -->
+            <tr class="process-info">
+                <td class="pid">
+                    <%= pid %>
+                </td>
+                <td class="acts">
+                    <a class="icon link stop" href="/stop/<%= pid %>/" title="Безопасно завершить процесс"></a>
+                    <a class="icon link kill" href="/kill/<%= pid %>/" title="Убить процесс"></a>
+
+                </td>
+                <td width="300"  class="workers">
+                    <ul>
+                        <% for (state in data[pid]) { %>
+                        <li class="state_<%= data[pid][state] %> rounded-corners">
+                            <%= data[pid][state] %>
+                        </li>
+                        <% }; %>
+                    </ul>
+                </td>
+            </tr>
+
+            <!-- /Информация о процессе -->
+
+<% }; %>

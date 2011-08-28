@@ -1,0 +1,89 @@
+body {
+    background-color: #fff;
+    position: relative;
+}
+
+section { padding-top: 30px; }
+.hidden { display: none }
+form input[type="text"][name="refresh"] { width: 2em; }
+
+.refresh-block {
+    text-align:right;
+    padding-top: 9px;
+}
+
+table {
+    td.pid {
+        width: 1px;
+        font-weight: bold;
+    }
+    tr.process-info td {
+        border-bottom-width: 2px;
+        vertical-align: top;
+    }
+    td.workers { border-bottom-width: 2px; }
+    td.acts {
+        width: 1px;
+        text-align: right;
+        padding-right: 0;
+    }
+}
+
+.createProcessForm {
+    .alert-message {
+        width: 490px;
+        margin-bottom: 0px;
+    }
+    form { padding-left: 0px; }
+}
+
+div {
+
+    .link { cursor: pointer; }
+    .icon {
+        width: 16px;
+        height: 16px;
+        display: inline-block;
+        margin-right: 6px;
+    }
+    .stop {
+        background: url(/img/icons/stop.gif);
+    }
+    .kill {
+        background: url(/img/icons/kill.gif);
+    }
+}
+
+.rounded-corners (@radius: 5px) {
+  border-radius: @radius;
+  -webkit-border-radius: @radius;
+  -moz-border-radius: @radius;
+}
+
+
+
+.workers {
+    vertical-align: top;
+    ul{
+        margin: 0;
+        padding: 0;
+        margin-bottom: -7px;
+        li {
+            .rounded-corners;
+            list-style: none;
+            display: inline-block;
+            width: 20px;
+            margin-right: 3px;
+            margin-bottom: 7px;
+            text-align: center;
+            border: 1px solid #DDD;
+        }
+    }
+}
+
+.state_1 { background: #FFCC66; }
+.state_2 { background: #FFCCCC; }
+.state_3 { background: #FFCCFF; }
+.state_4 { background: #CCCCFF; }
+.state_5 { background: #99CCFF; }
+
