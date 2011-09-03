@@ -10,9 +10,14 @@ GEM
       execjs
     coffee-script-source (1.1.2)
     daemons (1.1.4)
+    em-http-request (0.3.0)
+      addressable (>= 2.0.0)
+      escape_utils
+      eventmachine (>= 0.12.9)
     em-websocket (0.3.1)
       addressable (>= 2.1.1)
       eventmachine (>= 0.12.9)
+    escape_utils (0.2.3)
     eventmachine (0.12.10)
     execjs (1.2.4)
       multi_json (~> 1.0)
@@ -33,5 +38,6 @@ PLATFORMS
 DEPENDENCIES
   async_sinatra
   coffee-script
+  em-http-request
   em-websocket
   thin

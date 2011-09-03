@@ -9,119 +9,100 @@ require 'logger'
 require 'sinatra/async'
 
 $log = Logger.new($stdout)
+$channel = EventMachine::Channel.new
 
 
-module ProcessManagerClient
+class ProcessManagerClient < EventMachine::Connection
+
+  include EventMachine::Protocols::LineText2
+
   def initialize request, command
     @command = command
     @req = request
   end
 
   def post_init
-    $log.debug "Send data to server #{@command}"
+    $log.info 'ProcessManagerClient post_init'
     send_data @command
-    close_connection_after_writing
+  end
+
+  def receive_line(response)
+    $log.debug "ProcessManagerClient receive_line - #{response}"
+    @req.body response
   end
 
   def unbind
-    if error?
-      @req.body "ERROR: #{@command}"
-    else
-      @req.body "OK: #{@command}"
-    end
+    $log.debug "ProcessManagerClient unbind, error? #{error?}"
+    @req.body "ERROR: #{@command}" if error?
   end
 
+
 end
+
 
 class WebManager < Sinatra::Base
   register Sinatra::Async
   set :root, File.dirname(__FILE__)
 
+  def initialize *args
+    @channel = $channel
+    super
+  end
+
   aget '/' do
     redirect '/index.html'
   end
 
-
-  aget '/delay/:n' do |n|
-    EM.add_timer(n.to_i) { body { "delayed for #{n} seconds" } }
+  aget '/terminate/:pid/' do |pid|
+    ahalt 404 unless pid.match(/^\d+$/)
+    $log.info "TERMINATE #{pid}"
+    send_command_to_process_manager("TERMINATE PROCESS #{pid}\n")
   end
 
-  aget '/stop/:pid/' do |pid|
-    halt 404 unless pid.match(/^\d+$/)
-    EventMachine.connect '127.0.0.1', 7001, ProcessManagerClient, self, "TERMINATE PROCESS #{pid}\n"
-  end
   aget '/kill/:pid/' do |pid|
-    halt 404 unless pid.match(/^\d+$/)
-    EventMachine.connect '127.0.0.1', 7001, ProcessManagerClient, self, "KILL PROCESS #{pid}\n"
+    ahalt 404 unless pid.match(/^\d+$/)
+    $log.info "KILL #{pid}"
+    send_command_to_process_manager("KILL PROCESS #{pid}\n")
   end
 
   aget '/create/' do
+    ahalt 400, '400 Bad Request' unless params.key?('workers') and params['workers'].match(/^\d+$/)
+    $log.info "CREATE #{params['workers']}"
+    send_command_to_process_manager("CREATE PROCESS WITH #{params['workers']} WORKERS\n")
+  end
 
-    unless params.key?('workers') and params['workers'].match(/^\d+$/)
-      $log.debug 'bad request'
-      halt 400, '400 Bad Request'
-    end
+  apost '/update/' do
+    ahalt 400, '400 Bad Request' unless params.key?('data')
+    $log.info "UPDATE #{params.inspect}"
+    @channel.push params['data']
+    body ""
+  end
 
-    command = "CREATE PROCESS WITH #{params['workers']} WORKERS\n"
-    $log.debug command
+  private
+
+  def send_command_to_process_manager(command)
     EventMachine.connect '127.0.0.1', 7001, ProcessManagerClient, self, command
-
   end
 
-
-end
-
-module ThreadStateListener
-  include EventMachine::Protocols::LineText2
-
-  def initialize(channel, hash)
-    @channel = channel
-    @hash = hash
-  end
-
-  def receive_line(line)
-    close_connection
-
-    if line.match(/UPDATE (\d+)#(\d+) STATE (\d+)/)
-      pid, thread, state = Regexp::last_match.captures
-      if not @hash.has_key? pid
-        @hash[pid] = Hash.new()
-      end
-      @hash[pid][thread] = state
-    elsif line.match(/DELETE (\d+)#(\d+)/)
-      pid, thread = Regexp::last_match.captures
-      if @hash.has_key?(pid)
-        if @hash[pid].has_key?(thread)
-          @hash[pid].delete(thread)
-        end
-        if @hash[pid].length == 0
-          @hash.delete(pid)
-        end
-      end
-
-    else
-      $log.error "Recived invalid message abouth thread state: #{line}"
-    end
-
-    @channel.push @hash.to_json
-  end
 end
 
 
 EventMachine.run do
-  processes = Hash.new
-  channel = EventMachine::Channel.new
 
-  EventMachine::WebSocket.start(:host => "127.0.0.1", :port => 7002, :debug => false) do |ws|
+  EventMachine::WebSocket.start(:host => "127.0.0.1", :port => 10081) do |ws|
     ws.onopen {
-      @sid = channel.subscribe { |msg|
+      @sid = $channel.subscribe { |msg|
         ws.send msg
       }
     }
     ws.onclose {
-      channel.unsubscribe (@sid)
+      $channel.unsubscribe (@sid)
     }
+    ws.onerror { |error|
+      $log.error error
+    }
+
   end
-  EM::start_server '127.0.0.1', 7000, ThreadStateListener, channel, processes
+
   WebManager.run!({:port => 3000})
 end

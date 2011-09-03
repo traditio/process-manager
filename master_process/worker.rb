@@ -4,7 +4,7 @@ require "timeout"
 require "logger"
 
 PROCESS_MANAGER_HOST= '127.0.0.1'
-PROCESS_MANAGER_PORT= 7000
+PROCESS_MANAGER_PORT= 7001
 SOCKET_TIMEOUT = 5
 
 
@@ -24,8 +24,7 @@ class ThreadStateObserver
     begin
       timeout(1) do
         conn = create_connection
-        msg = (state > 0) ? "UPDATE #{@thread.thread_id} STATE #{state}" : "DELETE #{@thread.thread_id}"
-        conn.puts msg
+        conn.puts "UPDATE #{@thread.thread_id} STATE #{state}"
         conn.close
       end
     rescue Timeout::Error
@@ -59,10 +58,9 @@ class SafeKilledThread < Thread
   # i: порядковый номер треда, из него строится идентификатор
 
   def initialize
-
     @thread_id = "#{$$}##{object_id}"
     $log.debug 'Start new thread '+@thread_id
-    @state = 0
+    @state = 0 # если @state < 0 - то тред в процессе "умирания"
     super do
       job()
     end
@@ -74,8 +72,7 @@ class SafeKilledThread < Thread
   def job
     loop do
       notify_observers(@state)
-      delay = CHANGE_STATE_EVERY_SEC_MIN + rand(CHANGE_STATE_EVERY_SEC_MAX - 1)
-      sleep delay
+      sleep CHANGE_STATE_EVERY_SEC_MIN + rand(CHANGE_STATE_EVERY_SEC_MAX - 1)
       @state = (@state == 5) ? 1 : (@state + 1)
       changed
     end
@@ -84,60 +81,64 @@ class SafeKilledThread < Thread
   # Функция мягкого завершения треда
 
   def soft_kill
+    # какая-нибудь работа по безопасному завершению треда здесь
     @state = -1
     changed
     notify_observers(@state)
+    sleep 0.1
     kill()
   end
 
 end
 
+class ThreadsManager
 
-#Если процесс получает SIGTERM он корректно завершает свою работу,
-#"правильно" убивая все потоки.
+  #Если процесс получает SIGTERM он корректно завершает свою работу,
+  #"правильно" убивая все потоки.
 
 
-def soft_kill
-  threads = Thread.list.collect {|t| t if t != Thread.main}
-  threads.compact!
-    threads.each do |t|
-      if t.kind_of? SafeKilledThread
-        t.soft_kill()
-      else
-        t.kill()
+  def self.soft_kill
+    threads = Thread.list.collect {|t| t if t != Thread.main}
+    threads.compact!
+      threads.each do |t|
+        if t.kind_of? SafeKilledThread
+          t.soft_kill()
+        else
+          t.kill()
+        end
       end
-    end
-    exit(0)
-
-end
-
-# Запускает нужное кол-во потоков, присваивает им наблюдателей и ждет завершения работы
-
-def start_threads(count)
-
-  pid = fork do
-
-    trap("TERM") do
-      soft_kill
-    end
-
-    if count < 1
-      raise ArgumentError, "Count must be > 0, but got #{count}"
-    end
-
-    count.times do
-      t = SafeKilledThread.new
-      ThreadStateObserver.new(t)
-    end
-    Thread.list.each { |t| t.join() }
+      exit(0)
   end
-  Process.detach(pid)
-  pid
+
+  # Запускает нужное кол-во потоков, присваивает им наблюдателей и ждет завершения работы
+
+  def self.start(threads_count)
+
+    pid = fork do
+
+      trap("TERM") do
+        self.soft_kill
+      end
+
+      if threads_count < 1
+        raise ArgumentError, "Count must be > 0, but got #{threads_count}"
+      end
+
+      threads_count.times do
+        t = SafeKilledThread.new
+        ThreadStateObserver.new(t)
+      end
+      Thread.list.each { |t| t.join() }
+    end
+    Process.detach(pid)
+    pid
+  end
+
 end
 
 
 # только для отладки
 
 if __FILE__ == $0
-  start_threads(5)
+  ThreadsManager.start(5)
 end
