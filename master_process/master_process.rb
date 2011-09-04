@@ -1,6 +1,4 @@
 # coding: UTF-8
-$LOAD_PATH << File.expand_path(File.dirname(__FILE__))
-
 require 'rubygems'
 require 'logger'
 require 'json'
@@ -8,11 +6,9 @@ require 'json'
 require 'eventmachine'
 require "em-http-request"
 
-require "worker"
+require_relative "worker"
 
-
-
-$log = Logger.new($stdout)
+$log = Logger.new(File.expand_path("../../logs/development.log"))
 
 
 NOTIFY_URL = 'http://localhost:3000/update/'
@@ -22,6 +18,8 @@ PORT = 7001
 
 module ProcessManagerServer
   include EventMachine::Protocols::LineText2
+
+  attr_reader :pids
 
   def initialize(pids)
     @pids = pids
@@ -43,7 +41,7 @@ module ProcessManagerServer
         else
           $log.error "INVALID COMMAND"
       end
-    rescue
+    rescue Exception => e
       send_data("ERROR: #{e.message} #{e.backtrace.inspect}\n")
       close_connection_after_writing
       return
@@ -54,23 +52,23 @@ module ProcessManagerServer
   end
 
   def create_process(workers_count)
-    pid = ThreadsManager.start(workers_count)
+    pid = start_threads(workers_count)
     @pids[pid] = {} unless pid.nil?
   end
 
   def terminate(pid)
-    return unless @pids.member?(pid)
+    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
     begin
-      Process.kill(15, pid)
+      process_kill(15, pid)
     rescue Exception => e
       $log.debug "#{e.message}\n#{e.backtrace.inspect}"
     end
   end
 
   def kill(pid)
-    return unless @pids.member?(pid)
+    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
     begin
-      Process.kill(9, pid)
+      process_kill(9, pid)
     rescue Exception => e
       $log.debug "#{e.message}\n#{e.backtrace.inspect}"
       return
@@ -90,16 +88,33 @@ module ProcessManagerServer
 
   def notify_clients
 
-    http = EventMachine::HttpRequest.new(NOTIFY_URL).post :body => {:data => @pids.to_json}
+    http_post :body => {:data => @pids.to_json}
 
-    http.errback { $log.error(http.response) }
   end
+
+  private
+
+  def start_threads(workers_count)
+    ThreadsManager.start(workers_count)
+  end
+
+  def process_kill(sig, pid)
+    Process.kill(sig, pid)
+  end
+
+  def http_post(opts)
+    http = EventMachine::HttpRequest.new(NOTIFY_URL).post opts
+    http.errback { $log.error(http.response) }
+    http
+  end
+
 
 end
 
-
-EventMachine::run do
-  puts "Start process manager server on #{HOST}:#{PORT}"
-  pids = {}
-  EM::start_server HOST, PORT, ProcessManagerServer, pids
+if __FILE__ == $0
+  EventMachine::run do
+    puts "Start process manager server on #{HOST}:#{PORT}"
+    pids = {}
+    EM::start_server HOST, PORT, ProcessManagerServer, pids
+  end
 end

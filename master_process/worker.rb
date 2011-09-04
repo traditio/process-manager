@@ -47,7 +47,7 @@ end
 class SafeKilledThread < Thread
   include Observable # наблюдаемый объект
 
-  attr_reader :thread_id
+  attr_reader :thread_id, :state
 
   # Потк меняет свое состояние каждое кол-во секунд между этими значениями
   CHANGE_STATE_EVERY_SEC_MIN = 1
@@ -62,7 +62,9 @@ class SafeKilledThread < Thread
     $log.debug 'Start new thread '+@thread_id
     @state = 0 # если @state < 0 - то тред в процессе "умирания"
     super do
-      job()
+      loop do
+        job()
+      end
     end
   end
 
@@ -70,12 +72,10 @@ class SafeKilledThread < Thread
   #Он меняет свое состояние (от 1 до 5) по кругу через случ. промежуток времени
 
   def job
-    loop do
-      notify_observers(@state)
-      sleep CHANGE_STATE_EVERY_SEC_MIN + rand(CHANGE_STATE_EVERY_SEC_MAX - 1)
-      @state = (@state == 5) ? 1 : (@state + 1)
-      changed
-    end
+    notify_observers(@state)
+    sleep CHANGE_STATE_EVERY_SEC_MIN + rand(CHANGE_STATE_EVERY_SEC_MAX - 1)
+    @state = (@state == 5) ? 1 : (@state + 1)
+    changed
   end
 
   # Функция мягкого завершения треда
@@ -98,16 +98,16 @@ class ThreadsManager
 
 
   def self.soft_kill
-    threads = Thread.list.collect {|t| t if t != Thread.main}
+    threads = self.threads_list
     threads.compact!
-      threads.each do |t|
-        if t.kind_of? SafeKilledThread
-          t.soft_kill()
-        else
-          t.kill()
-        end
+    threads.each do |t|
+      if t.kind_of? SafeKilledThread
+        t.soft_kill()
+      else
+        t.kill()
       end
-      exit(0)
+    end
+    exit(0)
   end
 
   # Запускает нужное кол-во потоков, присваивает им наблюдателей и ждет завершения работы
@@ -115,30 +115,46 @@ class ThreadsManager
   def self.start(threads_count)
 
     pid = fork do
+      self.child_process(threads_count)
 
-      trap("TERM") do
-        self.soft_kill
-      end
 
-      if threads_count < 1
-        raise ArgumentError, "Count must be > 0, but got #{threads_count}"
-      end
-
-      threads_count.times do
-        t = SafeKilledThread.new
-        ThreadStateObserver.new(t)
-      end
-      Thread.list.each { |t| t.join() }
     end
-    Process.detach(pid)
+    self.detach_process(pid)
     pid
   end
 
-end
 
+  def self.child_process(threads_count)
+    trap("TERM") do
+      self.soft_kill
+    end
 
-# только для отладки
+    if threads_count < 1
+      raise ArgumentError, "Count must be > 0, but got #{threads_count}"
+    end
 
-if __FILE__ == $0
-  ThreadsManager.start(5)
+    threads_count.times do
+      t = SafeKilledThread.new
+      bind_to_observer(t)
+    end
+    self.join_threads
+  end
+
+  private
+
+  def self.threads_list
+    Thread.list.collect { |t| t if t != Thread.main }
+  end
+
+  def self.join_threads
+    Thread.list.each { |t| t.join() }
+  end
+
+  def self.bind_to_observer(tread)
+    ThreadStateObserver.new(tread)
+  end
+
+  def self.detach_process(pid)
+    Process.detach(pid)
+  end
 end
