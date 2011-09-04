@@ -3,16 +3,18 @@ require "socket"
 require "timeout"
 require "logger"
 
-PROCESS_MANAGER_HOST= '127.0.0.1'
-PROCESS_MANAGER_PORT= 7001
+
+PROCESS_MANAGER = {:host => '127.0.0.1', :port => 7001}
 SOCKET_TIMEOUT = 5
 
 
 $log = Logger.new($stdout)
 
 
-#Как поток меняет свое состояние, отсылаем сообщение на сокет.
-
+#Наблюдатель за состоянием тредов.
+#При измении состояния треда, класс отправляет на сокет серверу менеджера процессов
+#уведомление о новом состоянии.
+#Если истекает таймаут (не может соединиться с сервером), то пишет ошибку в лог.
 class ThreadStateObserver
 
   def initialize(thread)
@@ -28,12 +30,14 @@ class ThreadStateObserver
         conn.close
       end
     rescue Timeout::Error
-      $log.error "Can't send thread #{@thread.thread_id} state to #{PROCESS_MANAGER_HOST}:#{PROCESS_MANAGER_PORT}, timeout exceed"
+      $log.error "Can't send thread #{@thread.thread_id} state to #{PROCESS_MANAGER[:host]}:#{PROCESS_MANAGER[:port]}, timeout exceed"
     end
   end
 
+  private
+
   def create_connection
-    TCPSocket.open(PROCESS_MANAGER_HOST, PROCESS_MANAGER_PORT)
+    TCPSocket.open(PROCESS_MANAGER[:host], PROCESS_MANAGER[:port])
   end
 
 end
@@ -70,7 +74,6 @@ class SafeKilledThread < Thread
 
   #Абстрактная работа, которую выполняет поток.
   #Он меняет свое состояние (от 1 до 5) по кругу через случ. промежуток времени
-
   def job
     notify_observers(@state)
     sleep CHANGE_STATE_EVERY_SEC_MIN + rand(CHANGE_STATE_EVERY_SEC_MAX - 1)
@@ -79,7 +82,6 @@ class SafeKilledThread < Thread
   end
 
   # Функция мягкого завершения треда
-
   def soft_kill
     # какая-нибудь работа по безопасному завершению треда здесь
     @state = -1
@@ -95,8 +97,6 @@ class ThreadsManager
 
   #Если процесс получает SIGTERM он корректно завершает свою работу,
   #"правильно" убивая все потоки.
-
-
   def self.soft_kill
     threads = self.threads_list
     threads.compact!
@@ -111,19 +111,18 @@ class ThreadsManager
   end
 
   # Запускает нужное кол-во потоков, присваивает им наблюдателей и ждет завершения работы
-
   def self.start(threads_count)
 
     pid = fork do
       self.child_process(threads_count)
-
-
     end
     self.detach_process(pid)
     pid
   end
 
+  private
 
+  #Код для дочернего процесса. Запускает N безопасно убиваемых тредов и ждет SIGTERM для их остановки.
   def self.child_process(threads_count)
     trap("TERM") do
       self.soft_kill
@@ -134,13 +133,12 @@ class ThreadsManager
     end
 
     threads_count.times do
-      t = SafeKilledThread.new
+      t = self.new_safekilled_thread
       bind_to_observer(t)
     end
     self.join_threads
   end
 
-  private
 
   def self.threads_list
     Thread.list.collect { |t| t if t != Thread.main }
@@ -156,5 +154,9 @@ class ThreadsManager
 
   def self.detach_process(pid)
     Process.detach(pid)
+  end
+
+  def self.new_safekilled_thread
+     SafeKilledThread.new
   end
 end

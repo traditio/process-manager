@@ -12,6 +12,12 @@ $log = Logger.new($stdout)
 $channel = EventMachine::Channel.new
 
 
+WEB_INTERFACE = {:host => "localhost", :port => 3000}
+WEBSOCKETS = {:host => "localhost", :port => 10081}
+
+#Этот класс предназначен для отправки запросов на сокет из
+#асинхронной синатры. Получет ответ от сокета и синатра возвращает
+#этот ответ по HTTP.
 class ProcessManagerClient < EventMachine::Connection
 
   include EventMachine::Protocols::LineText2
@@ -40,6 +46,7 @@ class ProcessManagerClient < EventMachine::Connection
 end
 
 
+#Асинхронная синатра. Замечательно работает с EventMachine не блокируя поток.
 class WebManager < Sinatra::Base
   register Sinatra::Async
   set :root, File.dirname(__FILE__)
@@ -49,28 +56,35 @@ class WebManager < Sinatra::Base
     super
   end
 
+  # отдаем главную страничку (она статическая)
   aget '/' do
     redirect '/index.html'
   end
 
+  # безопасная остановка процесса
   aget '/terminate/:pid/' do |pid|
     ahalt 404 unless pid.match(/^\d+$/)
     $log.info "TERMINATE #{pid}"
     send_command_to_process_manager("TERMINATE PROCESS #{pid}\n")
   end
 
+  # убийство процесса
   aget '/kill/:pid/' do |pid|
     ahalt 404 unless pid.match(/^\d+$/)
     $log.info "KILL #{pid}"
     send_command_to_process_manager("KILL PROCESS #{pid}\n")
   end
 
+  # создание процесса с N воркерами
   aget '/create/' do
     ahalt 400, '400 Bad Request' unless params.key?('workers') and params['workers'].match(/^\d+$/)
     $log.info "CREATE #{params['workers']}"
     send_command_to_process_manager("CREATE PROCESS WITH #{params['workers']} WORKERS\n")
   end
 
+  # сюда отправляет сообщения сервер менеджера процессов.
+  # По уму, в продакшне, надо разрешать принимать соединения на этот URL
+  # только от определенного IP (на котором работает менеджер процессов) или по ключу.
   apost '/update/' do
     ahalt 400, '400 Bad Request' unless params.key?('data')
     $log.info "UPDATE #{params.inspect}"
@@ -89,7 +103,10 @@ end
 
 EventMachine.run do
 
-  EventMachine::WebSocket.start(:host => "127.0.0.1", :port => 10081) do |ws|
+  # Обновление информации на клиенте осуществляется через вебсокеты
+  # Может следовало сделать long-pooling в целях совместимости, но никто не
+  # запрещает нам экспериментировать с new technologies в тестовых заданиях, верно?
+  EventMachine::WebSocket.start(WEBSOCKETS) do |ws|
     ws.onopen {
       @sid = $channel.subscribe { |msg|
         ws.send msg
@@ -104,5 +121,5 @@ EventMachine.run do
 
   end
 
-  WebManager.run!({:port => 3000})
+  WebManager.run!(WEB_INTERFACE) # асинхронная сината
 end
