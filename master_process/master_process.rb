@@ -1,19 +1,16 @@
-# coding: UTF-8
-require 'rubygems'
-require 'logger'
-require 'json'
+#coding=utf-8
+root = File.dirname(__FILE__)
+$:.unshift(root) unless $:.include?(root)
 
-require 'eventmachine'
+require "logger"
+require "json"
+require "eventmachine"
 require "em-http-request"
 
-require_relative "worker"
-
-$log = Logger.new($stdout)
+require "threads_manager"
 
 
-NOTIFY_URL = 'http://localhost:3000/update/'
-HOST = '127.0.0.1'
-PORT = 7001
+$log = Logger.new($stderr)
 
 
 #Класс: Сервер Менеджер процесссов
@@ -26,99 +23,95 @@ PORT = 7001
 #
 #После получения любой из команд он обновляен состояние тредов и отсылает инф-цию о состоянии по http на NOTIFY_URL
 
-module ProcessManagerServer
+class ProcessManagerServer < EventMachine::Connection
   include EventMachine::Protocols::LineText2
-
-  attr_reader :pids
 
   def initialize(pids)
     @pids = pids
+    super
   end
 
   #Обработать команду для сервера процессов
   def receive_line(command)
     $log.debug "GOT COMMAND: #{command}"
+    
     begin
+
       case command
-        when /^CREATE PROCESS WITH (\d+) WORKERS$/
+        when /\ACREATE PROCESS WITH (\d+) WORKERS\z/
           create_process(Regexp::last_match.captures[0].to_i)
-        when /^TERMINATE PROCESS (\d+)$/
+        when /\ATERMINATE PROCESS (\d+)\z/
           terminate(Regexp::last_match.captures[0].to_i)
-        when /^KILL PROCESS (\d+)$/
+        when /\AKILL PROCESS (\d+)\z/
           kill(Regexp::last_match.captures[0].to_i)
-        when /^UPDATE (\d+)#(\d+) STATE (-?\d+)$/
+        when /\AUPDATE (\d+)#(\d+) STATE (-?\d+)\z/
           pid, thread, state = Regexp::last_match.captures.collect { |c| c.to_i }
           update(pid, thread, state)
         else
           $log.error "INVALID COMMAND"
       end
+
     rescue Exception => e
-      send_data("ERROR: #{e.message} #{e.backtrace.inspect}\n")
-      close_connection_after_writing
-      return
+      send_data "ERROR: #{e.message} #{e.backtrace.inspect}\n"
+    else
+      send_data "OK\n"
+      notify_clients
     end
-    send_data("OK\n")
+
     close_connection_after_writing
-    notify_clients
   end
 
   #Создать новый процесс
   def create_process(workers_count)
     pid = start_threads(workers_count)
-    @pids[pid] = {} unless pid.nil?
+    @pids[pid] = {}
   end
 
   #Безопасно завершить процесс, по одному убив все воркеры. Отсылает SIGTERM процессу
   def terminate(pid)
-    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
-    begin
-      process_kill(15, pid)
-    rescue Exception => e
-      $log.debug "#{e.message}\n#{e.backtrace.inspect}"
-    end
+    process_kill(15, pid)
+  rescue Exception => e
+    $log.error "#{e.message}\n#{e.backtrace.inspect}"
   end
 
   #Просто убить процесс. Отсылает SIGKILL
   def kill(pid)
-    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
-    begin
-      process_kill(9, pid)
-    rescue Exception => e
-      $log.debug "#{e.message}\n#{e.backtrace.inspect}"
-      return
-    end
+    process_kill(9, pid) #SIGKILL
     @pids.delete(pid)
+  rescue Exception => e
+    $log.error "#{e.message}\n#{e.backtrace.inspect}"
   end
 
   #Обновить состояние воркеров процесса
   def update(pid, thread, state)
     @pids[pid] ||= {}
-    if state > 0
+
+    if state.to_i > 0
       @pids[pid][thread] = state
     else
       @pids[pid].delete(thread)
-      @pids.delete(pid) if @pids[pid].empty?
+      @pids.delete pid if @pids[pid].empty?
     end
   end
 
   #Отправить уведомление об изменившимся состоянии веб-серверу по http
   def notify_clients
-    http_post :body => {:data => @pids.to_json}
+    http_post body: {data: @pids.to_json}
   end
 
   private
 
   def start_threads(workers_count)
-    ThreadsManager.start(workers_count)
+    ThreadsManager.start workers_count
   end
 
   def process_kill(sig, pid)
-    Process.kill(sig, pid)
+    Process.kill sig, pid
   end
 
   def http_post(opts)
     http = EventMachine::HttpRequest.new(NOTIFY_URL).post opts
-    http.errback { $log.error(http.response) }
+    http.errback { $log.error "Cannot post data to #{NOTIFY_URL}" }
     http
   end
 
@@ -127,8 +120,12 @@ end
 
 if __FILE__ == $0
   EventMachine::run do
-    puts "Start process manager server on #{HOST}:#{PORT}"
-    pids = {}
-    EM::start_server HOST, PORT, ProcessManagerServer, pids
+    puts "Start process manager server on #{MASTER_PROCCESS[:host]}:#{MASTER_PROCCESS[:port]}"
+    pids = {} #shared beetween requests
+    EM::start_server MASTER_PROCCESS[:host], MASTER_PROCCESS[:port], ProcessManagerServer, pids
+
+    trap "TERM" do
+      ThreadsManager.soft_kill
+    end
   end
 end

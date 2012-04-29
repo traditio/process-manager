@@ -1,6 +1,6 @@
 require "rr"
 require "json"
-require_relative "../../master_process/worker"
+require_relative "../../master_process/threads_manager"
 
 
 RSpec.configure do |config|
@@ -70,13 +70,13 @@ describe SafeKilledThread do
   context "when run the job" do
 
     it "change state" do
-      t.job()
+      t.change_state()
       t.state.should_not == 0
     end
 
     it "notify obeservers" do
       mock(t).notify_observers(numeric)
-      t.job()
+      t.change_state()
     end
 
   end
