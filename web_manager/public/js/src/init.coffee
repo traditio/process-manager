@@ -22,7 +22,7 @@ init_app = () ->
       json = jQuery.parseJSON( e.data )
       new EJS({url: '/js/templates/process_list.ejs'}).update 'processes_info', {data: json}
     ws.onclose = () ->
-      alert 'Could not connect to server. Refresh the page'
+      alert 'Cannot connect to the server. Refresh the page'
 
     $('form').live 'submit', () ->
       return false

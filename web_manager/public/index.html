@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="/css/facebox.css">
     <link rel="stylesheet" href="/css/bootstrap.css">
     <link rel="stylesheet/less" type="text/css" href="/css/styles.less">
-    <title>Proccess manager</title>
+    <title>Process manager</title>
 
     <script data-main="js/main" src="js/require.js"></script>
 </head>
@@ -15,7 +15,7 @@
 
         <div class="row">
             <div class="span8 columns">
-                <h1>Proccess manager</h1>
+                <h1>Process manager</h1>
             </div>
 
         </div>
@@ -25,7 +25,7 @@
         <table border="1" width="500" class="blue">
             <thead>
             <tr>
-                <th colspan="2">Proccess</th>
+                <th colspan="2">Process</th>
                 <th>Workers</th>
             </tr>
             </thead>
@@ -33,7 +33,7 @@
 
             </tbody>
         </table>
-        <button class="btn primary" id="createProcessButton">Create proccess</button>
+        <button class="btn primary" id="createProcessButton">Create a process</button>
     </div>
 </section>
 
@@ -45,11 +45,11 @@
     <div class="modal-body createProcessForm">
 
         <div class="alert-message error" style="display: none;">
-            <p><strong>Error!</strong> Enter the count of workers (Integer),.</p>
+            <p><strong>Error!</strong>Enter the count of threads (Integer).</p>
         </div>
         <form action="/create/" class="form-stacked">
             <fieldset>
-                <label for="id_workers_input">Workers count</label>
+                <label for="id_workers_input">Threads count</label>
                 <input type="text" name="workers" id="id_workers_input">
             </fieldset>
         </form>
@@ -57,7 +57,7 @@
 
     </div>
     <div class="modal-footer">
-        <a href="#" class="btn primary submit">Create proccess</a>
+        <a href="#" class="btn primary submit">Create a process</a>
     </div>
 
 </div>

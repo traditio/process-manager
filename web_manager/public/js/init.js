@@ -40,7 +40,7 @@ init_app = function() {
             });
         };
         ws.onclose = function() {
-            return alert('Could not connect to server. Refresh the page');
+            return alert('Cannot connect to the server. Refresh the page');
         };
         $('form').live('submit', function() {
             return false;
