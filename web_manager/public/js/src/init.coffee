@@ -1,6 +1,5 @@
 init_app = () ->
   $ () ->
-    console.log 'init app'
     $('.alert-message').delay(10000).fadeOut()
     $('#createProcessButton').click () ->
       $.facebox { div: '#createProcessForm' }
@@ -8,7 +7,7 @@ init_app = () ->
     $('.acts .link').live 'click', (ev) ->
       ev.preventDefault()
 
-      if confirm 'Вы уверены?'
+      if confirm 'Are you sure?'
         $.get $(ev.target).data('url'), {}, (data) ->
           if data.match(/^OK/)
             type = "success"
@@ -19,13 +18,11 @@ init_app = () ->
 
 
     ws = new WebSocket("ws://localhost:10081/")
-    ws.onopen = () ->
-      console.log 'ws open'
     ws.onmessage = (e) ->
       json = jQuery.parseJSON( e.data )
       new EJS({url: '/js/templates/process_list.ejs'}).update 'processes_info', {data: json}
     ws.onclose = () ->
-      alert 'Соединение с сервером разорвано! Перезагрузите страницу'
+      alert 'Cannot connect to the server. Refresh the page'
 
     $('form').live 'submit', () ->
       return false

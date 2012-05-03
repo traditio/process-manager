@@ -1,134 +1,132 @@
-# coding: UTF-8
-require 'rubygems'
-require 'logger'
-require 'json'
+#coding=utf-8
+root = File.dirname(__FILE__)
+$:.unshift(root) unless $:.include?(root)
 
-require 'eventmachine'
+
+require "json"
+require "eventmachine"
 require "em-http-request"
 
-require_relative "worker"
-
-$log = Logger.new($stdout)
-
-
-NOTIFY_URL = 'http://localhost:3000/update/'
-HOST = '127.0.0.1'
-PORT = 7001
+require "threads_manager"
+require "settings"
 
 
-#Класс: Сервер Менеджер процесссов
-#
-#Он принимает комманды на порт PORT:
-#  /^CREATE PROCESS WITH (\d+) WORKERS$/ - создать процесс с N тредами
-#  /^TERMINATE PROCESS (\d+)$/ - безопасно завершить процесс, выполнив работу по завершению каждого воркера
-#  /^KILL PROCESS (\d+)$/ - жестко прибить процесс со всеми воркерами
-#  /^UPDATE (\d+)#(\d+) STATE (-?\d+)$/ - обновить состояния для треда X процесса Y
-#
-#После получения любой из команд он обновляен состояние тредов и отсылает инф-цию о состоянии по http на NOTIFY_URL
+module MasterProcess
 
-module ProcessManagerServer
-  include EventMachine::Protocols::LineText2
+  #This server gets commands to its PORT:
+  #  /^CREATE PROCESS WITH (\d+) WORKERS$/ - create a process with N workers
+  #  /^TERMINATE PROCESS (\d+)$/ - terminate the process safe
+  #  /^KILL PROCESS (\d+)$/ - kill the process
+  #  /^UPDATE (\d+)#(\d+) STATE (-?\d+)$/ - refresh the state for thread X of process Y
+  #
+  #After getting any command it updates state of threads and sends the information to NOTIFY_URL by HTTP
+  module ProcessManagerServer
+    include EventMachine::Protocols::LineText2
 
-  attr_reader :pids
+    def initialize(pids, *args)
+      @pids = pids
+      super(*args)
+    end
 
-  def initialize(pids)
-    @pids = pids
-  end
+    #Process the command
+    def receive_line(command)
+      begin
+        MasterProcess.logger.debug("GOT COMMAND: #{ command }")
 
-  #Обработать команду для сервера процессов
-  def receive_line(command)
-    $log.debug "GOT COMMAND: #{command}"
-    begin
-      case command
-        when /^CREATE PROCESS WITH (\d+) WORKERS$/
+        case command
+        when /\ACREATE PROCESS WITH (\d+) WORKERS\z/
           create_process(Regexp::last_match.captures[0].to_i)
-        when /^TERMINATE PROCESS (\d+)$/
+        when /\ATERMINATE PROCESS (\d+)\z/
           terminate(Regexp::last_match.captures[0].to_i)
-        when /^KILL PROCESS (\d+)$/
+        when /\AKILL PROCESS (\d+)\z/
           kill(Regexp::last_match.captures[0].to_i)
-        when /^UPDATE (\d+)#(\d+) STATE (-?\d+)$/
-          pid, thread, state = Regexp::last_match.captures.collect { |c| c.to_i }
+        when /\AUPDATE (\d+)#(\d+) STATE (-?\d+)\z/
+          pid, thread, state = Regexp::last_match.captures.map { |c| c.to_i }
           update(pid, thread, state)
         else
-          $log.error "INVALID COMMAND"
+          MasterProcess.logger.error("INVALID COMMAND #{ command.inspect }")
+        end
+
+      rescue => error
+        MasterProcess.logger.error("#{ error.message } #{ error.backtrace.inspect }")
+        send_data("ERROR: #{ error.message } #{ error.backtrace.inspect }\n")
+      else
+        send_data("OK\n")
+        notify_clients
       end
-    rescue Exception => e
-      send_data("ERROR: #{e.message} #{e.backtrace.inspect}\n")
+
       close_connection_after_writing
-      return
     end
-    send_data("OK\n")
-    close_connection_after_writing
-    notify_clients
-  end
 
-  #Создать новый процесс
-  def create_process(workers_count)
-    pid = start_threads(workers_count)
-    @pids[pid] = {} unless pid.nil?
-  end
+    #Create a new process
+    def create_process(workers_count)
+      pid = start_threads(workers_count)
+      @pids[pid] = {}
+    end
 
-  #Безопасно завершить процесс, по одному убив все воркеры. Отсылает SIGTERM процессу
-  def terminate(pid)
-    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
-    begin
+    #Terminate the process safe, killing all threads one by one. Send SIGTERM to the process.
+    def terminate(pid)
       process_kill(15, pid)
-    rescue Exception => e
-      $log.debug "#{e.message}\n#{e.backtrace.inspect}"
+    end
+
+    #Kill the process. Send SIGKILL.
+    def kill(pid)
+      process_kill(9, pid) #SIGKILL
+      @pids.delete(pid)
+
+    end
+
+    #Update the state of threads.
+    def update(pid, thread, state)
+      @pids[pid] ||= {}
+
+      if state.to_i > 0
+        @pids[pid][thread] = state
+      else
+        @pids[pid].delete(thread)
+        @pids.delete(pid) if @pids[pid].empty?
+      end
+    end
+
+    #Notify web server about state changes via HTTP.
+    def notify_clients
+      http_post(body: {data: @pids.to_json})
+    end
+
+    def pids
+      @pids
+    end
+
+    private
+
+    def start_threads(workers_count)
+      ThreadsManager.start(workers_count)
+    end
+
+    def process_kill(sig, pid)
+      Process.kill(sig, pid)
+    end
+
+    def http_post(opts)
+      http = EventMachine::HttpRequest.new(NOTIFY_URL).post opts
+      http.errback { MasterProcess.logger.error("Cannot post data to #{ NOTIFY_URL }") }
+      http
     end
   end
 
-  #Просто убить процесс. Отсылает SIGKILL
-  def kill(pid)
-    raise ArgumentError("No proccess with PID #{pid}") unless @pids.member?(pid)
-    begin
-      process_kill(9, pid)
-    rescue Exception => e
-      $log.debug "#{e.message}\n#{e.backtrace.inspect}"
-      return
-    end
-    @pids.delete(pid)
-  end
+  def self.main
+    EventMachine::run do
+      puts "Start process manager server on #{ HOST }:#{ PORT }"
+      MasterProcess.logger.info("Start process manager server on #{ HOST }:#{ PORT }")
+      pids = {}
+      EM::start_server(HOST, PORT, ProcessManagerServer, pids)
 
-  #Обновить состояние воркеров процесса
-  def update(pid, thread, state)
-    @pids[pid] ||= {}
-    if state > 0
-      @pids[pid][thread] = state
-    else
-      @pids[pid].delete(thread)
-      @pids.delete(pid) if @pids[pid].empty?
+      trap("TERM") { ThreadsManager.kill_safe }
     end
   end
-
-  #Отправить уведомление об изменившимся состоянии веб-серверу по http
-  def notify_clients
-    http_post :body => {:data => @pids.to_json}
-  end
-
-  private
-
-  def start_threads(workers_count)
-    ThreadsManager.start(workers_count)
-  end
-
-  def process_kill(sig, pid)
-    Process.kill(sig, pid)
-  end
-
-  def http_post(opts)
-    http = EventMachine::HttpRequest.new(NOTIFY_URL).post opts
-    http.errback { $log.error(http.response) }
-    http
-  end
-
-
 end
 
+
 if __FILE__ == $0
-  EventMachine::run do
-    puts "Start process manager server on #{HOST}:#{PORT}"
-    pids = {}
-    EM::start_server HOST, PORT, ProcessManagerServer, pids
-  end
+  MasterProcess.main
 end

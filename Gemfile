@@ -1,14 +1,14 @@
-# A sample Gemfile
-source "http://rubygems.org"
+source :rubygems
 
-gem 'async_sinatra', :require => "sinatra"
-gem 'em-websocket', :require => "eventmachine"
-gem 'em-http-request'
-gem 'json'
-gem 'rake'
-gem 'rspec'
-gem 'rr'
-gem 'coffee-script'
-gem 'thin'
+gem "async_sinatra"
+gem "em-websocket"
+gem "em-http-request"
+gem "json"
+
+gem "rake" #IDE integration
+gem "rspec"
+gem "rr"
+gem "coffee-script"
+gem "thin"
 
 

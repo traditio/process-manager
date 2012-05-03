@@ -1,6 +1,10 @@
+#coding=utf-8
+root = File.expand_path("../..", File.dirname(__FILE__))
+$:.unshift(root) unless $:.include?(root)
+
 require "rr"
 require "json"
-require_relative "../../master_process/worker"
+require "master_process/threads_manager"
 
 
 RSpec.configure do |config|
@@ -8,163 +12,143 @@ RSpec.configure do |config|
 end
 
 
-describe ThreadStateObserver do
-
-  let!(:conn) {
-    conn=Object.new
+describe MasterProcess::ThreadStateObserver do
+  let!(:conn) do
+    conn = Object.new
     stub(conn).close {}
     stub(conn).puts {}
     conn
-  }
+  end
+
   subject do
     thread = Object.new
     stub(thread).thread_id { 1 }
     stub(thread).add_observer {}
-
-
-    subj = ThreadStateObserver.new thread
+    subj = MasterProcess::ThreadStateObserver.new(thread)
     stub(subj).create_connection { conn }
     subj
-
   end
 
   describe "#update" do
-
     after(:each) { subject.update(10) }
-    it "puts command to socket" do
+
+    it "send a command to socket" do
       mock(conn).puts('UPDATE 1 STATE 10')
     end
 
-    it "closes socket after putting command" do
+    it "closes the socket after sending a command" do
       mock(conn).close
     end
 
-    it "do not nothing when timeout to socket connectin" do
-      mock(subject).create_connection { sleep 1.1 }
+    it "does nothing when timeout raises during the connection to the socket" do
+      mock(subject).create_connection { sleep 1.1; conn }
       do_not_allow(conn).puts
     end
-
   end
 end
 
 
-describe SafeKilledThread do
-
-
+describe MasterProcess::SafeKilledThread do
   let!(:t) do
-    t = SafeKilledThread.new
-    stub(t).super {}
-    stub(t).notify_observers {}
-    stub(t).kill {}
-    t
+    thread = MasterProcess::SafeKilledThread.new
+    stub(thread).super {}
+    stub(thread).notify_observers {}
+    thread
   end
-
-  after(:each) { t.kill() }
 
   it { t.should be_a_kind_of(Observable) }
 
-  it "state should be 0" do
+  it "the state should be 0" do
     t.state.should == 0
   end
 
-  context "when run the job" do
-
-    it "change state" do
-      t.job()
+  context "when the job is being made" do
+    it "changes the state" do
+      t.change_state
       t.state.should_not == 0
     end
 
-    it "notify obeservers" do
+    it "notifies observers" do
       mock(t).notify_observers(numeric)
-      t.job()
+      t.change_state
     end
-
   end
-  context "when terminate (soft killing)" do
 
-    it "change state to -1" do
-      t.soft_kill()
+  context "when terminating the process" do
+    it "changes the state to -1" do
+      t.kill_safe
       t.state.should == -1
     end
 
-    it "notify_observers" do
+    it "notifies observers" do
       mock(t).notify_observers(-1)
-      t.soft_kill()
+      t.kill_safe
     end
 
-    it "self killing" do
+    it "kills itself" do
       mock(t).kill
-      t.soft_kill()
+      t.kill_safe
     end
-
   end
-
 end
 
 
-describe ThreadsManager do
+describe MasterProcess::ThreadsManager do
+  subject do
+    manager = MasterProcess::ThreadsManager
+    stub(manager).exit {}
+    stub(manager).threads_list {}
+    stub(manager).join_all {}
+    stub(manager).bind_to_observer {}
+    stub(manager).detach_process {}
+    stub(manager).new_safekilled_thread {}
+    manager
+  end
 
-  subject {
-    tm = ThreadsManager
-    stub(tm).exit {}
-    stub(tm).threads_list {}
-    stub(tm).join_threads {}
-    stub(tm).bind_to_observer {}
-    stub(tm).detach_process {}
-    stub(tm).new_safekilled_thread {}
-    tm
-  }
-
-  describe ".soft_kill" do
-
-    it "soft kill all instances of SafeKilledThread" do
-      t = SafeKilledThread.new
-      stub(t).super {}
-      stub(subject).threads_list {[t, t]}
-      mock(t).soft_kill().times(2) {}
-      subject.soft_kill()
+  describe ".kill_safe" do
+    it "kills all instances of SafeKilledThread safe" do
+      thread = MasterProcess::SafeKilledThread.new
+      stub(thread).super {}
+      stub(subject).threads_list { [thread, thread] }
+      mock(thread).kill_safe.times(2) {}
+      subject.kill_safe
     end
 
-    it "exit" do
-      stub(subject).threads_list {[]}
+    it "exists" do
+      stub(subject).threads_list { [] }
       mock(subject).exit(0)
-      subject.soft_kill()
+      subject.kill_safe
     end
-
   end
 
   describe ".start" do
-
-    it "forks and detach" do
+    it "forks and detaches the processes" do
       mock(subject).fork { 1 }
       mock(subject).detach_process(1) { 1 }
       subject.start(1)
     end
-
   end
 
   describe ".child_process" do
-
     context "when threads_count < 1" do
-      it do expect { subject.child_process(0) }.to raise_error end
+      it { expect { subject.child_process(0) }.to raise_error }
     end
 
-    it "traps sigterm" do
+    it "traps SIGTERM" do
       mock(subject).trap("TERM")
       subject.child_process(1)
     end
 
-    it "makes N safe killed threads" do
-      mock(subject).new_safekilled_thread.times(5) {1}
+    it "creates N safe killed threads" do
+      mock(subject).new_safekilled_thread.times(5) { 1 }
       mock(subject).bind_to_observer(1).times(5) {}
       subject.child_process(5)
     end
 
-    it "joins thhreads" do
-      mock(subject).join_threads {}
+    it "joins the threads" do
+      mock(subject).join_all {}
       subject.child_process(1)
     end
-
   end
 
 end
